@@ -4,13 +4,9 @@ import numpy as np
 from sklearn.linear_model import LinearRegression
 from datetime import datetime
 import matplotlib.pyplot as plt
-from alpha_vantage.timeseries import TimeSeries
+import yfinance as yf
 
-# Set up Alpha Vantage
-api_key = 'your_alpha_vantage_api_key'  # Replace with your API key
-ts = TimeSeries(key=api_key, output_format='pandas')
-
-# Sample sector P/E averages - you'd replace this with actual data retrieval logic
+# Sample sector P/E averages - adjust this with real data
 sector_pe_averages = {
     "Technology": 25,
     "Healthcare": 20,
@@ -18,7 +14,7 @@ sector_pe_averages = {
     # Add more sectors as needed
 }
 
-# Map ETF symbols to sectors - an example implementation
+# Map ETF symbols to sectors - Example implementation
 etf_sectors = {
     "MSFT": "Technology",
     "GOOGL": "Technology",
@@ -26,10 +22,10 @@ etf_sectors = {
     # Add sector mappings for other ETFs
 }
 
-# Helper Functions
+# --- Helper Functions ---
 def fetch_etf_data(symbol):
     try:
-        data, meta_data = ts.get_daily(symbol=symbol, outputsize='full')
+        data = yf.download(symbol, period='max')
         return data
     except Exception as e:
         st.error(f"Error fetching data for {symbol}: {e}")
@@ -37,8 +33,8 @@ def fetch_etf_data(symbol):
 
 def calculate_ytd_return(data):
     current_year = datetime.now().year
-    first_of_year = data[data.index.year == current_year].iloc[0]['4. close']
-    latest_close = data.iloc[-1]['4. close']
+    first_of_year = data.loc[str(current_year)].iloc[0]['Close']
+    latest_close = data['Close'].iloc[-1]
     return (latest_close / first_of_year) - 1
 
 def calculate_annualized_return(prices, years):
@@ -49,8 +45,7 @@ def calculate_annualized_return(prices, years):
     return ((end_price / start_price) ** (1 / years)) - 1
 
 def get_historical_returns(data):
-    data = data['4. close']
-    prices = data.values[::-1]
+    prices = data['Close'].values[::-1]
     returns = {
         "YTD": calculate_ytd_return(data),
         "1Y": calculate_annualized_return(prices, 1),
@@ -62,10 +57,10 @@ def get_historical_returns(data):
     return returns
 
 def ml_forecast(data, years_ahead=5):
-    data = data['4. close'].dropna().reset_index()
-    data['Days'] = (data['date'] - data['date'].min()).dt.days
+    data = data.dropna().reset_index()
+    data['Days'] = (data['Date'] - data['Date'].min()).dt.days
     X = data[['Days']]
-    y = data['4. close']
+    y = data['Close']
     model = LinearRegression().fit(X, y)
     future_day = data['Days'].max() + (252 * years_ahead)
     pred_price = model.predict([[future_day]])[0]
@@ -96,7 +91,7 @@ def compute_score(history, future, undervaluation):
         score += future * 30
     return score
 
-# Streamlit UI
+# --- Streamlit UI ---
 st.set_page_config(page_title='ETF Undervaluation & Forecast App', layout='wide')
 st.title('ETF Undervaluation & Forecast App')
 
