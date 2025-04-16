@@ -4,38 +4,21 @@ import numpy as np
 from sklearn.linear_model import LinearRegression
 from datetime import datetime
 import matplotlib.pyplot as plt
-import yfinance as yf
+from alpha_vantage.timeseries import TimeSeries
 
-# Sample sector P/E averages - adjust this with real data
-sector_pe_averages = {
-    "Technology": 25,
-    "Healthcare": 20,
-    "Financials": 15,
-    # Add more sectors as needed
-}
-
-# Map ETF symbols to sectors - Example implementation
-etf_sectors = {
-    "MSFT": "Technology",
-    "GOOGL": "Technology",
-    "JNJ": "Healthcare",
-    # Add sector mappings for other ETFs
-}
+# Alpha Vantage setup
+api_key = 'your_alpha_vantage_api_key'  # Replace with your API key
+ts = TimeSeries(key=api_key, output_format='pandas')
 
 # --- Helper Functions ---
 def fetch_etf_data(symbol):
     try:
-        data = yf.download(symbol, period='max')
+        # Fetch daily historical data
+        data, meta_data = ts.get_daily(symbol=symbol, outputsize='full')
         return data
     except Exception as e:
         st.error(f"Error fetching data for {symbol}: {e}")
         return None
-
-def calculate_ytd_return(data):
-    current_year = datetime.now().year
-    first_of_year = data.loc[str(current_year)].iloc[0]['Close']
-    latest_close = data['Close'].iloc[-1]
-    return (latest_close / first_of_year) - 1
 
 def calculate_annualized_return(prices, years):
     if len(prices) < 252 * years:
@@ -45,9 +28,9 @@ def calculate_annualized_return(prices, years):
     return ((end_price / start_price) ** (1 / years)) - 1
 
 def get_historical_returns(data):
-    prices = data['Close'].values[::-1]
+    data = data['4. close']
+    prices = data.values[::-1]  # Reverse to simulate oldest to newest order
     returns = {
-        "YTD": calculate_ytd_return(data),
         "1Y": calculate_annualized_return(prices, 1),
         "3Y": calculate_annualized_return(prices, 3),
         "5Y": calculate_annualized_return(prices, 5),
@@ -57,10 +40,10 @@ def get_historical_returns(data):
     return returns
 
 def ml_forecast(data, years_ahead=5):
-    data = data.dropna().reset_index()
-    data['Days'] = (data['Date'] - data['Date'].min()).dt.days
+    data = data['4. close'].dropna().reset_index()
+    data['Days'] = (data['date'] - data['date'].min()).dt.days
     X = data[['Days']]
-    y = data['Close']
+    y = data['4. close']
     model = LinearRegression().fit(X, y)
     future_day = data['Days'].max() + (252 * years_ahead)
     pred_price = model.predict([[future_day]])[0]
@@ -68,27 +51,16 @@ def ml_forecast(data, years_ahead=5):
     annual_return = ((pred_price / current_price) ** (1 / years_ahead)) - 1
     return annual_return
 
-def compute_undervaluation(symbol, pe_ratio):
-    sector = etf_sectors.get(symbol, None)
-    if sector is None or pe_ratio is None:
-        st.warning(f"No sector or P/E ratio available for {symbol}")
-        return None
-    
-    sector_avg_pe = sector_pe_averages.get(sector, None)
-    if sector_avg_pe is None:
-        st.warning(f"No average P/E data for sector: {sector}")
-        return None
-    
-    return ((sector_avg_pe - pe_ratio) / sector_avg_pe) * 100
-
-def compute_score(history, future, undervaluation):
-    score = 0.0
-    if undervaluation is not None:
-        score += (undervaluation / 100) * 20
+def compute_score(valuation, history, future):
+    score = 0
+    if valuation["pe_ratio"] is not None:
+        score += 1 / valuation["pe_ratio"]
+    if valuation["pb_ratio"] is not None:
+        score += 1 / valuation["pb_ratio"]
     if history["5Y"] is not None:
-        score += history["5Y"] * 50
+        score += history["5Y"] * 100
     if future is not None:
-        score += future * 30
+        score += future * 100
     return score
 
 # --- Streamlit UI ---
@@ -102,23 +74,24 @@ for symbol in etf_symbols:
     try:
         data = fetch_etf_data(symbol.strip())
         if data is not None:
-            # Replace with real P/E ratio fetching mechanism
-            simulated_pe_ratio = 18  # Placeholder
+            valuation = {
+                "pe_ratio": None,  # Adjust logic for P/E and P/B ratios if using such metrics from another source
+                "pb_ratio": None
+            }
             history_returns = get_historical_returns(data)
             forecast_return = ml_forecast(data)
-            undervaluation = compute_undervaluation(symbol.strip(), simulated_pe_ratio)
-            score = compute_score(history_returns, forecast_return, undervaluation)
+            score = compute_score(valuation, history_returns, forecast_return)
 
             results.append({
                 "Symbol": symbol,
-                "YTD": history_returns["YTD"],
+                "P/E": valuation["pe_ratio"],
+                "P/B": valuation["pb_ratio"],
                 "1Y": history_returns["1Y"],
                 "3Y": history_returns["3Y"],
                 "5Y": history_returns["5Y"],
                 "10Y": history_returns["10Y"],
                 "Since Inception": history_returns["Since Inception"],
                 "Forecast 5Y": forecast_return,
-                "Undervaluation %": undervaluation,
                 "Score": score
             })
     except Exception as e:
@@ -129,13 +102,13 @@ if results:
     df_sorted = df.sort_values('Score', ascending=False).reset_index(drop=True)
     st.subheader('ETF Rankings by Score')
     st.dataframe(df_sorted.style.format({
-        "YTD": "{:.2%}",
+        "P/E": "{:.2f}",
+        "P/B": "{:.2f}",
         "1Y": "{:.2%}",
         "3Y": "{:.2%}",
         "5Y": "{:.2%}",
         "10Y": "{:.2%}",
         "Since Inception": "{:.2%}",
         "Forecast 5Y": "{:.2%}",
-        "Undervaluation %": "{:.2f}%",
         "Score": "{:.2f}"
     }), use_container_width=True)
