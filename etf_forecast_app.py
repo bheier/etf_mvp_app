@@ -1,5 +1,3 @@
-
-
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -7,10 +5,12 @@ import numpy as np
 from sklearn.linear_model import LinearRegression
 from datetime import datetime
 import matplotlib.pyplot as plt
+import time
 
 # --- Helper Functions ---
 def fetch_etf_data(etf_symbol):
     etf = yf.Ticker(etf_symbol)
+    # Fetch historical prices and info
     hist = etf.history(period="max")
     info = etf.info
     return hist, info
@@ -87,6 +87,10 @@ for symbol in etf_symbols:
             "Forecast 5Y": forecast_return,
             "Score": score
         })
+        
+        # Add delay between requests to avoid rate limiting
+        time.sleep(1)  # 1-second delay between API requests
+
     except Exception as e:
         st.error(f"Error processing {symbol}: {str(e)}")
 
