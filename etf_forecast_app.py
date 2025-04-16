@@ -8,12 +8,21 @@ import matplotlib.pyplot as plt
 import time
 
 # --- Helper Functions ---
-def fetch_etf_data(etf_symbol):
-    etf = yf.Ticker(etf_symbol)
-    # Fetch historical prices and info
-    hist = etf.history(period="max")
-    info = etf.info
-    return hist, info
+def reliably_fetch_etf_data(symbol, attempt=1, max_attempts=5, delay=2):
+    """Fetch ETF data with retry logic."""
+    try:
+        etf = yf.Ticker(symbol)
+        hist = etf.history(period="max")
+        info = etf.info
+        return hist, info
+    except Exception as e:
+        if attempt < max_attempts:
+            time_to_wait = delay * (2 ** (attempt - 1))  # Exponential backoff
+            print(f"Error fetching {symbol}: {str(e)}. Retrying in {time_to_wait} seconds...")
+            time.sleep(time_to_wait)
+            return reliably_fetch_etf_data(symbol, attempt + 1, max_attempts, delay)
+        else:
+            raise e
 
 def calculate_annualized_return(prices, years):
     if len(prices) < 252 * years:
@@ -66,7 +75,7 @@ etf_symbols = st.text_input("Enter comma-separated ETF symbols:", value="VOO,VTI
 results = []
 for symbol in etf_symbols:
     try:
-        hist, info = fetch_etf_data(symbol.strip())
+        hist, info = reliably_fetch_etf_data(symbol.strip())
         valuation = {
             "pe_ratio": info.get("trailingPE"),
             "pb_ratio": info.get("priceToBook")
@@ -88,11 +97,11 @@ for symbol in etf_symbols:
             "Score": score
         })
         
-        # Add delay between requests to avoid rate limiting
-        time.sleep(1)  # 1-second delay between API requests
+        # Add a delay between symbols to further prevent rate limiting
+        time.sleep(2)  # Slightly longer delay
 
     except Exception as e:
-        st.error(f"Error processing {symbol}: {str(e)}")
+        st.error(f"Persistent error processing {symbol}: {str(e)}")
 
 if results:
     df = pd.DataFrame(results)
