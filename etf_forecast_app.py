@@ -41,16 +41,6 @@ def get_historical_returns(hist):
     }
     return returns
 
-def get_ytd_change(hist):
-    try:
-        start_of_year = datetime(datetime.now().year, 1, 1)
-        ytd_start_price = hist.loc[start_of_year]["Close"].iloc[0]
-        current_price = hist["Close"].iloc[-1]
-        ytd_change = ((current_price - ytd_start_price) / ytd_start_price) * 100
-        return ytd_change
-    except:
-        return None
-
 def get_undervaluation(info):
     try:
         current_price = info.get("currentPrice")
@@ -99,7 +89,6 @@ for symbol in etf_symbols:
         forecast_return = ml_forecast(hist)
         score = compute_score(valuation, history_returns, forecast_return)
         
-        ytd_change = get_ytd_change(hist)
         undervaluation = get_undervaluation(info)
 
         results.append({
@@ -111,7 +100,6 @@ for symbol in etf_symbols:
             "5Y": history_returns["5Y"] if history_returns["5Y"] is not None else 0,
             "10Y": history_returns["10Y"] if history_returns["10Y"] is not None else 0,
             "Since Inception": history_returns["Since Inception"] if history_returns["Since Inception"] is not None else 0,
-            "YTD Change": ytd_change if ytd_change is not None else 0,
             "Undervaluation (%)": undervaluation if undervaluation is not None else 0,
             "Forecast 5Y": forecast_return if forecast_return is not None else 0,
             "Score": score if score is not None else 0
@@ -139,7 +127,6 @@ if results:
             "5Y": "{:.2%}",
             "10Y": "{:.2%}",
             "Since Inception": "{:.2%}",
-            "YTD Change": "{:.2f}%",
             "Undervaluation (%)": "{:.2f}%",
             "Forecast 5Y": "{:.2%}",
             "Score": "{:.2f}"
