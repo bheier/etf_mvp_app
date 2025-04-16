@@ -63,12 +63,6 @@ def get_undervaluation(info):
     except:
         return None
 
-def get_pe_ratio_range(valuation):
-    try:
-        return valuation["pe_ratio"], valuation["pb_ratio"]
-    except:
-        return None, None
-
 def ml_forecast(hist, years_ahead=5):
     df = hist["Close"].dropna().reset_index()
     df["Days"] = (df["Date"] - df["Date"].min()).dt.days
@@ -107,21 +101,20 @@ for symbol in etf_symbols:
         
         ytd_change = get_ytd_change(hist)
         undervaluation = get_undervaluation(info)
-        pe_ratio, pb_ratio = get_pe_ratio_range(valuation)
 
         results.append({
             "Symbol": symbol,
-            "P/E": pe_ratio,
-            "P/B": pb_ratio,
-            "1Y": history_returns["1Y"],
-            "3Y": history_returns["3Y"],
-            "5Y": history_returns["5Y"],
-            "10Y": history_returns["10Y"],
-            "Since Inception": history_returns["Since Inception"],
-            "YTD Change": ytd_change,
-            "Undervaluation (%)": undervaluation,
-            "Forecast 5Y": forecast_return,
-            "Score": score
+            "P/E": valuation["pe_ratio"] if valuation["pe_ratio"] is not None else 0,
+            "P/B": valuation["pb_ratio"] if valuation["pb_ratio"] is not None else 0,
+            "1Y": history_returns["1Y"] if history_returns["1Y"] is not None else 0,
+            "3Y": history_returns["3Y"] if history_returns["3Y"] is not None else 0,
+            "5Y": history_returns["5Y"] if history_returns["5Y"] is not None else 0,
+            "10Y": history_returns["10Y"] if history_returns["10Y"] is not None else 0,
+            "Since Inception": history_returns["Since Inception"] if history_returns["Since Inception"] is not None else 0,
+            "YTD Change": ytd_change if ytd_change is not None else 0,
+            "Undervaluation (%)": undervaluation if undervaluation is not None else 0,
+            "Forecast 5Y": forecast_return if forecast_return is not None else 0,
+            "Score": score if score is not None else 0
         })
 
         # Add a delay between symbols to further prevent rate limiting
@@ -133,17 +126,23 @@ for symbol in etf_symbols:
 if results:
     df = pd.DataFrame(results)
     df_sorted = df.sort_values("Score", ascending=False).reset_index(drop=True)
+
+    df_sorted = df_sorted.fillna(0)  # Fills NaN with 0 to avoid formatting issues
+
     st.subheader("ETF Rankings by Score")
-    st.dataframe(df_sorted.style.format({
-        "P/E": "{:.2f}",
-        "P/B": "{:.2f}",
-        "1Y": "{:.2%}",
-        "3Y": "{:.2%}",
-        "5Y": "{:.2%}",
-        "10Y": "{:.2%}",
-        "Since Inception": "{:.2%}",
-        "YTD Change": "{:.2f}%",
-        "Undervaluation (%)": "{:.2f}%",
-        "Forecast 5Y": "{:.2%}",
-        "Score": "{:.2f}"
-    }), use_container_width=True)
+    st.dataframe(
+        df_sorted.style.format({
+            "P/E": "{:.2f}",
+            "P/B": "{:.2f}",
+            "1Y": "{:.2%}",
+            "3Y": "{:.2%}",
+            "5Y": "{:.2%}",
+            "10Y": "{:.2%}",
+            "Since Inception": "{:.2%}",
+            "YTD Change": "{:.2f}%",
+            "Undervaluation (%)": "{:.2f}%",
+            "Forecast 5Y": "{:.2%}",
+            "Score": "{:.2f}"
+        }), 
+        use_container_width=True
+    )
