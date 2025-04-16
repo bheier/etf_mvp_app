@@ -16,52 +16,30 @@ def reliably_fetch_etf_data(symbol, attempt=1, max_attempts=5, delay=5):
         return hist, info
     except Exception as e:
         if attempt < max_attempts:
-            time_to_wait = delay * (2 ** (attempt - 1))  # Exponential backoff
+            time_to_wait = delay * (2 ** (attempt - 1))
             st.error(f"Error fetching {symbol}: {str(e)}. Retrying in {time_to_wait} seconds...")
             time.sleep(time_to_wait)
             return reliably_fetch_etf_data(symbol, attempt + 1, max_attempts, delay)
         else:
             raise e
-
+        
 def moving_average_valuation(hist):
     """Calculate moving averages and assess current price position."""
     short_ma = hist['Close'].rolling(window=50).mean().iloc[-1]
     long_ma = hist['Close'].rolling(window=200).mean().iloc[-1]
     current_price = hist['Close'].iloc[-1]
 
-    # Comparative score: if price < both MAs, consider undervalued
     ma_score = 0
     if current_price < short_ma and current_price < long_ma:
-        ma_score = 1
+        ma_score = 1.0
     elif current_price < short_ma or current_price < long_ma:
         ma_score = 0.5
     return ma_score
 
-def pe_ratio_valuation(pe_ratio):
-    """Calculate P/E ratio score against benchmark"""
-    # Define a benchmark P/E ratio, or dynamic benchmark based on the market
-    benchmark_pe = 15
-
-    # Calculate P/E score: lower means more undervalued
-    if pe_ratio > 0 and pe_ratio < benchmark_pe:
-        pe_score = 1.5 - (pe_ratio / benchmark_pe)  # Adjust weighting as needed
-        return max(pe_score, 0)
-    return 0
-
-def get_undervaluation(info, hist):
-    try:
-        pe_ratio = info.get("trailingPE")
-        if pe_ratio:
-            ma_score = moving_average_valuation(hist)
-            pe_score = pe_ratio_valuation(pe_ratio)
-
-            undervaluation_score = ma_score + pe_score  # Total underevaluation score
-            return undervaluation_score * 100
-        else:
-            return 0  # Default if P/E ratio is unavailable
-    except Exception as e:
-        st.error(f"Error calculating undervaluation: {e}")
-        return 0
+def get_undervaluation(hist):
+    """Determine undervaluation based solely on moving averages."""
+    ma_score = moving_average_valuation(hist)
+    return ma_score * 100
 
 def calculate_annualized_return(prices, years):
     if len(prices) < 252 * years:
@@ -81,23 +59,14 @@ def get_historical_returns(hist):
     }
     return returns
 
-def ml_forecast(hist, years_ahead=5):
-    df = hist["Close"].dropna().reset_index()
-    df["Days"] = (df["Date"] - df["Date"].min()).dt.days
-    X = df[["Days"]]
-    y = df["Close"]
-    model = LinearRegression().fit(X, y)
-    future_day = df["Days"].max() + (252 * years_ahead)
-    pred_price = model.predict([[future_day]])[0]
-    current_price = y.iloc[-1]
-    annual_return = ((pred_price / current_price) ** (1 / years_ahead)) - 1
-    return annual_return
+def compute_score(valuation, history):
+    # Combining the 5Y and 10Y returns for a more balanced historical perspective
+    historical_score_5Y = history["5Y"] if history["5Y"] is not None else 0
+    historical_score_10Y = history["10Y"] if history["10Y"] is not None else 0
 
-def compute_score(valuation, history, future):
-    historical_score = history["5Y"] * 0.5 if history["5Y"] is not None else 0
-    undervaluation_score = get_undervaluation(valuation, hist) * 0.25
-    future_score = future * 0.25 if future is not None else 0
-    return historical_score + undervaluation_score + future_score
+    total_historical_score = (historical_score_5Y + historical_score_10Y) / 2 * 0.5
+    undervaluation_score = valuation * 0.5
+    return total_historical_score + undervaluation_score
 
 # --- Streamlit UI ---
 st.set_page_config(page_title="ETF Undervaluation & Forecast App", layout="wide")
@@ -109,28 +78,20 @@ results = []
 for symbol in etf_symbols:
     try:
         hist, info = reliably_fetch_etf_data(symbol.strip())
-        valuation = {
-            "pe_ratio": info.get("trailingPE"),
-            "pb_ratio": info.get("priceToBook")
-        }
+        valuation = get_undervaluation(hist)
 
         history_returns = get_historical_returns(hist)
-        forecast_return = ml_forecast(hist)
-        score = compute_score(valuation, history_returns, forecast_return)
+        score = compute_score(valuation, history_returns)
         
-        undervaluation = get_undervaluation(info, hist)
-
         results.append({
             "Symbol": symbol,
-            "P/E": valuation["pe_ratio"] if valuation["pe_ratio"] is not None else 0,
-            "P/B": valuation["pb_ratio"] if valuation["pb_ratio"] is not None else 0,
+            "P/E": info.get("trailingPE") if info.get("trailingPE") is not None else 0,
             "1Y": history_returns["1Y"] if history_returns["1Y"] is not None else 0,
             "3Y": history_returns["3Y"] if history_returns["3Y"] is not None else 0,
             "5Y": history_returns["5Y"] if history_returns["5Y"] is not None else 0,
             "10Y": history_returns["10Y"] if history_returns["10Y"] is not None else 0,
             "Since Inception": history_returns["Since Inception"] if history_returns["Since Inception"] is not None else 0,
-            "Undervaluation (%)": undervaluation,
-            "Forecast 5Y": forecast_return if forecast_return is not None else 0,
+            "Undervaluation (%)": valuation,
             "Score": score if score is not None else 0
         })
 
@@ -150,14 +111,12 @@ if results:
     st.dataframe(
         df_sorted.style.format({
             "P/E": "{:.2f}",
-            "P/B": "{:.2f}",
             "1Y": "{:.2%}",
             "3Y": "{:.2%}",
             "5Y": "{:.2%}",
             "10Y": "{:.2%}",
             "Since Inception": "{:.2%}",
             "Undervaluation (%)": "{:.2f}%",
-            "Forecast 5Y": "{:.2%}",
             "Score": "{:.2f}"
         }), 
         use_container_width=True
