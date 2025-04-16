@@ -4,7 +4,6 @@ import pandas as pd
 import numpy as np
 from sklearn.linear_model import LinearRegression
 from datetime import datetime
-import matplotlib.pyplot as plt
 import time
 
 # --- Helper Functions ---
@@ -42,6 +41,34 @@ def get_historical_returns(hist):
     }
     return returns
 
+def get_ytd_change(hist):
+    try:
+        start_of_year = datetime(datetime.now().year, 1, 1)
+        ytd_start_price = hist.loc[start_of_year]["Close"].iloc[0]
+        current_price = hist["Close"].iloc[-1]
+        ytd_change = ((current_price - ytd_start_price) / ytd_start_price) * 100
+        return ytd_change
+    except:
+        return None
+
+def get_undervaluation(info):
+    try:
+        current_price = info.get("currentPrice")
+        fair_value = info.get("targetMeanPrice")  # Assuming "targetMeanPrice" is a proxy for fair value
+        if current_price and fair_value:
+            undervaluation = ((fair_value - current_price) / fair_value) * 100
+            return undervaluation
+        else:
+            return None
+    except:
+        return None
+
+def get_pe_ratio_range(valuation):
+    try:
+        return valuation["pe_ratio"], valuation["pb_ratio"]
+    except:
+        return None, None
+
 def ml_forecast(hist, years_ahead=5):
     df = hist["Close"].dropna().reset_index()
     df["Days"] = (df["Date"] - df["Date"].min()).dt.days
@@ -55,16 +82,10 @@ def ml_forecast(hist, years_ahead=5):
     return annual_return
 
 def compute_score(valuation, history, future):
-    score = 0
-    if valuation["pe_ratio"] is not None:
-        score += 1 / valuation["pe_ratio"]
-    if valuation["pb_ratio"] is not None:
-        score += 1 / valuation["pb_ratio"]
-    if history["5Y"] is not None:
-        score += history["5Y"] * 100
-    if future is not None:
-        score += future * 100
-    return score
+    historical_score = history["5Y"] * 0.5 if history["5Y"] is not None else 0
+    undervaluation_score = get_undervaluation(valuation) * 0.25 if get_undervaluation(valuation) is not None else 0
+    future_score = future * 0.25 if future is not None else 0
+    return historical_score + undervaluation_score + future_score
 
 # --- Streamlit UI ---
 st.set_page_config(page_title="ETF Undervaluation & Forecast App", layout="wide")
@@ -83,21 +104,27 @@ for symbol in etf_symbols:
         history_returns = get_historical_returns(hist)
         forecast_return = ml_forecast(hist)
         score = compute_score(valuation, history_returns, forecast_return)
+        
+        ytd_change = get_ytd_change(hist)
+        undervaluation = get_undervaluation(info)
+        pe_ratio, pb_ratio = get_pe_ratio_range(valuation)
 
         results.append({
             "Symbol": symbol,
-            "P/E": valuation["pe_ratio"],
-            "P/B": valuation["pb_ratio"],
+            "P/E": pe_ratio,
+            "P/B": pb_ratio,
             "1Y": history_returns["1Y"],
             "3Y": history_returns["3Y"],
             "5Y": history_returns["5Y"],
             "10Y": history_returns["10Y"],
             "Since Inception": history_returns["Since Inception"],
+            "YTD Change": ytd_change,
+            "Undervaluation (%)": undervaluation,
             "Forecast 5Y": forecast_return,
             "Score": score
         })
-        
-        # Add a delay between symbols to prevent rate limiting
+
+        # Add a delay between symbols to further prevent rate limiting
         time.sleep(2)
 
     except Exception as e:
@@ -115,6 +142,8 @@ if results:
         "5Y": "{:.2%}",
         "10Y": "{:.2%}",
         "Since Inception": "{:.2%}",
+        "YTD Change": "{:.2f}%",
+        "Undervaluation (%)": "{:.2f}%",
         "Forecast 5Y": "{:.2%}",
         "Score": "{:.2f}"
     }), use_container_width=True)
