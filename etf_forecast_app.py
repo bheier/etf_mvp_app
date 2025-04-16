@@ -23,6 +23,46 @@ def reliably_fetch_etf_data(symbol, attempt=1, max_attempts=5, delay=5):
         else:
             raise e
 
+def moving_average_valuation(hist):
+    """Calculate moving averages and assess current price position."""
+    short_ma = hist['Close'].rolling(window=50).mean().iloc[-1]
+    long_ma = hist['Close'].rolling(window=200).mean().iloc[-1]
+    current_price = hist['Close'].iloc[-1]
+
+    # Comparative score: if price < both MAs, consider undervalued
+    ma_score = 0
+    if current_price < short_ma and current_price < long_ma:
+        ma_score = 1
+    elif current_price < short_ma or current_price < long_ma:
+        ma_score = 0.5
+    return ma_score
+
+def pe_ratio_valuation(pe_ratio):
+    """Calculate P/E ratio score against benchmark"""
+    # Define a benchmark P/E ratio, or dynamic benchmark based on the market
+    benchmark_pe = 15
+
+    # Calculate P/E score: lower means more undervalued
+    if pe_ratio > 0 and pe_ratio < benchmark_pe:
+        pe_score = 1.5 - (pe_ratio / benchmark_pe)  # Adjust weighting as needed
+        return max(pe_score, 0)
+    return 0
+
+def get_undervaluation(info, hist):
+    try:
+        pe_ratio = info.get("trailingPE")
+        if pe_ratio:
+            ma_score = moving_average_valuation(hist)
+            pe_score = pe_ratio_valuation(pe_ratio)
+
+            undervaluation_score = ma_score + pe_score  # Total underevaluation score
+            return undervaluation_score * 100
+        else:
+            return 0  # Default if P/E ratio is unavailable
+    except Exception as e:
+        st.error(f"Error calculating undervaluation: {e}")
+        return 0
+
 def calculate_annualized_return(prices, years):
     if len(prices) < 252 * years:
         return None
@@ -41,18 +81,6 @@ def get_historical_returns(hist):
     }
     return returns
 
-def get_undervaluation(info):
-    try:
-        current_price = info.get("currentPrice")
-        fair_value = info.get("targetMeanPrice")  # Assuming "targetMeanPrice" is a proxy for fair value
-        if current_price and fair_value:
-            undervaluation = ((fair_value - current_price) / fair_value) * 100
-            return undervaluation
-        else:
-            return None
-    except:
-        return None
-
 def ml_forecast(hist, years_ahead=5):
     df = hist["Close"].dropna().reset_index()
     df["Days"] = (df["Date"] - df["Date"].min()).dt.days
@@ -67,7 +95,7 @@ def ml_forecast(hist, years_ahead=5):
 
 def compute_score(valuation, history, future):
     historical_score = history["5Y"] * 0.5 if history["5Y"] is not None else 0
-    undervaluation_score = get_undervaluation(valuation) * 0.25 if get_undervaluation(valuation) is not None else 0
+    undervaluation_score = get_undervaluation(valuation, hist) * 0.25
     future_score = future * 0.25 if future is not None else 0
     return historical_score + undervaluation_score + future_score
 
@@ -85,11 +113,12 @@ for symbol in etf_symbols:
             "pe_ratio": info.get("trailingPE"),
             "pb_ratio": info.get("priceToBook")
         }
+
         history_returns = get_historical_returns(hist)
         forecast_return = ml_forecast(hist)
         score = compute_score(valuation, history_returns, forecast_return)
         
-        undervaluation = get_undervaluation(info)
+        undervaluation = get_undervaluation(info, hist)
 
         results.append({
             "Symbol": symbol,
@@ -100,14 +129,14 @@ for symbol in etf_symbols:
             "5Y": history_returns["5Y"] if history_returns["5Y"] is not None else 0,
             "10Y": history_returns["10Y"] if history_returns["10Y"] is not None else 0,
             "Since Inception": history_returns["Since Inception"] if history_returns["Since Inception"] is not None else 0,
-            "Undervaluation (%)": undervaluation if undervaluation is not None else 0,
+            "Undervaluation (%)": undervaluation,
             "Forecast 5Y": forecast_return if forecast_return is not None else 0,
             "Score": score if score is not None else 0
         })
 
         # Add a delay between symbols to further prevent rate limiting
         time.sleep(2)
-
+    
     except Exception as e:
         st.error(f"Persistent error processing {symbol}: {str(e)}")
 
